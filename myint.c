@@ -12,15 +12,16 @@
 #include <sys/wait.h>
 #include <signal.h>
 
-int main(int argc, char **argv) 
-{
+int main(int argc, char **argv) {
+
     int i, secs;
     pid_t pid; 
 
     if (argc != 2) {
-	fprintf(stderr, "Usage: %s <n>\n", argv[0]);
-	exit(0);
+    	fprintf(stderr, "Usage: %s <n>\n", argv[0]);
+    	exit(0);
     }
+    
     secs = atoi(argv[1]);
 
     for (i=0; i < secs; i++)
