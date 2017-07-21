@@ -75,6 +75,7 @@ void clearjob(struct job_t *job);
 void initjobs(struct job_t *jobs);
 int maxjid(struct job_t *jobs); 
 int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline);
+int changeJobState(struct job_t *jobs, pid_t pid, int state);
 int deletejob(struct job_t *jobs, pid_t pid); 
 pid_t fgpid(struct job_t *jobs);
 struct job_t *getjobpid(struct job_t *jobs, pid_t pid);
@@ -195,13 +196,15 @@ void eval(char *cmdline){
 	 */
 	if (!builtin_cmd(argv)){
 
-		printf("not a builtin_cmd\n");
-		printf("pid: %d\n", pid);
-		printf("agrv: %s\n", *argv);
-		sigemptyset(&mask); // initialize a mask to block SIGCHLD
+		// initialize a mask to block SIGCHLD
+		sigemptyset(&mask); 
 		
-		// block SIGCHILD
-		sigaddset(&mask, SIGCHLD); 
+		// block SIGCHILD, SIGINT, SIGTSTP
+		sigaddset(&mask, SIGCHLD);
+		sigaddset(&mask, SIGINT);
+		sigaddset(&mask, SIGTSTP);
+
+		// apply masks		
 		sigprocmask(SIG_BLOCK, &mask, NULL);
 
 
@@ -213,7 +216,7 @@ void eval(char *cmdline){
 			 */
 			setpgid(0, 0);
 
-			// unblock SIGCHILD
+			// unblock SIGCHILD, SIGINT, SIGTSTP
 			sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
 			/* Call the system call to execute the command given on command line. */
@@ -231,10 +234,8 @@ void eval(char *cmdline){
 		/* The process is the Parent. Wait for fg job to terminate. */
 		if (!isBG){
 
-			int status; // allows ability to track status if desired.
-
 			// need to add job to the BG here
-			if(!addjob(jobs, pid, BG, cmdline))
+			if(!addjob(jobs, pid, FG, cmdline))
 				unix_error("added empty job\n.");
 
 			// unblock SIGCHILD
@@ -244,7 +245,7 @@ void eval(char *cmdline){
 
 		} else {
 
-			if(!addjob(jobs, pid, FG, cmdline))
+			if(!addjob(jobs, pid, BG, cmdline))
 				unix_error("added empty job\n.");
 
 			// unblock SIGCHILD
@@ -374,9 +375,13 @@ void do_bgfg(char **argv) {
  * waitfg - Block until process pid is no longer the foreground process
  */
 void waitfg(pid_t pid) {
+ 
+	while(pid == fgpid(jobs)) {
+		// simply spin this proccess until the job isn't in FG
+		;
+	}
 
-
-    return;
+	return;
 
 }
 
@@ -402,25 +407,28 @@ void sigchld_handler(int sig) {
 		// If the child was stopped, updated its status in jobs list
 		if(WIFSTOPPED(child_status)){
 
-			changestate(jobs, pid, ST);
-			printf("Job #[%d], pid (%d) stopped with signal %d\n",
-	     			pid2jid(pid), pid, WSTOPSIG(child_status));
+			if(changeJobState(jobs, pid, ST)){
+
+				printf("Job [%d] (%d) stopped by signal %d\n",
+						pid2jid(pid), pid, WSTOPSIG(child_status));
+
+			} else {
+
+				unix_error("invalid job status change target");
+			}
 
 		} else { // otherwise if the child was killed, deleted it from jobs list
 
 			if (WIFSIGNALED(child_status)) {
 
-				printf("Job #[%d], pid (%d) exited with signal %d\n",
-	     			pid2jid(pid), pid, WTERMSIG(child_status));
+				printf("Job [%d] (%d) terminated by signal %d\n",
+						pid2jid(pid), pid, WTERMSIG(child_status));
 			}
 
 			deletejob(jobs, pid);
 		}
 
 	}
-
-
-		
 
 	if (errno != ECHILD)
 		unix_error("waitpid error");
@@ -434,8 +442,21 @@ void sigchld_handler(int sig) {
  *    to the foreground job.  
  */
 void sigint_handler(int sig) {
-	printf("\n");
-	exit(0);
+
+	// get the current FG process to send the signal to.	
+	pid_t currentFGPID = fgpid(jobs);
+
+	if (currentFGPID > 0) {
+
+		// send SIGINT to every process in the current pgrp
+		kill(-currentFGPID, SIGINT);
+
+	} else {
+
+		unix_error("Error retreving foreground job");
+	}
+
+	return;
 }
 
 /*
@@ -444,6 +465,20 @@ void sigint_handler(int sig) {
  *     foreground job by sending it a SIGTSTP.  
  */
 void sigtstp_handler(int sig) {
+
+	// get the current FG process to send the signal to.
+	pid_t currentFGPID = fgpid(jobs);
+
+	if (currentFGPID > 0) {
+
+		// send SIGTSTP to every process in the current pgrp
+		kill(-currentFGPID, SIGTSTP);
+
+	} else {
+
+		unix_error("Error retreving foreground job");
+	}
+
 	return;
 }
 
@@ -512,6 +547,20 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline) {
 	}
 
 	printf("Tried to create too many jobs\n");
+	return 0;
+}
+
+/* changeJobState - find job, and change its state to the new state */
+int changeJobState(struct job_t *jobs, pid_t pid, int state){
+
+	
+	struct job_t *currentJob;
+
+	if( (currentJob = getjobpid(jobs, pid)) ){
+		currentJob->state = state;
+		return 1;
+	}
+
 	return 0;
 }
 
@@ -614,7 +663,7 @@ void listjobs(struct job_t *jobs) {
 						break;
 					default:
 						printf("listjobs: Internal error: job[%d].state=%d ", 
-						       i, jobs[i].state);
+							   i, jobs[i].state);
 				}
 
 			printf("%s", jobs[i].cmdline);
