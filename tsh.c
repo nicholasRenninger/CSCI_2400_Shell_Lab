@@ -342,18 +342,11 @@ int builtin_cmd(char **argv) {
 		listjobs(jobs);
 		return 1;
 
-	// FG
-	} else if (!strcmp(argv[0], "fg")){
+	// FG / BG handling
+	} else if ( !strcmp(argv[0], "fg") || !strcmp(argv[0], "bg") ) {
 
-		
-		return 0;
-
-	// BG
-	} else if (!strcmp(argv[0], "bg")){
-
-		
+		do_bgfg(argv);
 		return 1;
-
 			
 	// Ignore the Single "&" in a command line
 	} else if (!strcmp(argv[0], "&")) {
@@ -368,6 +361,8 @@ int builtin_cmd(char **argv) {
  * do_bgfg - Execute the builtin bg and fg commands
  */
 void do_bgfg(char **argv) {
+
+
 	return;
 }
 
@@ -683,6 +678,7 @@ void printJob(struct job_t *jobs, pid_t pid) {
 		printf("%s", currentJob->cmdline);
 	}
 }
+
 /******************************
  * end job list helper routines
  ******************************/
