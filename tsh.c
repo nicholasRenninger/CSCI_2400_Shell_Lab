@@ -16,10 +16,10 @@
 #include <errno.h>
 
 /* Misc manifest constants */
-#define MAXLINE     1024   		/* max line size */
-#define MAXARGS     128   		/* max args on a command line */
-#define MAXJOBS     16   		/* max jobs at any point in time */
-#define MAXJID    	1 << 16     /* max job ID */
+#define MAXLINE     1024   			/* max line size */
+#define MAXARGS     128   			/* max args on a command line */
+#define MAXJOBS     16   			/* max jobs at any point in time */
+#define MAXJID    	1 << MAXJOBS    /* max job ID */
 
 /* Job states */
 #define UNDEF 	0 	 /* undefined */
@@ -60,7 +60,7 @@ struct job_t jobs[MAXJOBS]; /* The job list */
 /* Here are the functions that you will implement */
 void eval(char *cmdline);
 int builtin_cmd(char **argv);
-void do_bgfg(char **argv);
+void do_bgfg(char **argv, int isBG);
 void waitfg(pid_t pid);
 
 void sigchld_handler(int sig);
@@ -81,6 +81,7 @@ pid_t fgpid(struct job_t *jobs);
 struct job_t *getjobpid(struct job_t *jobs, pid_t pid);
 struct job_t *getjobjid(struct job_t *jobs, int jid); 
 int pid2jid(pid_t pid); 
+int jid2pid(struct job_t *job);
 void listjobs(struct job_t *jobs);
 void printJob(struct job_t *jobs, pid_t pid);
 
@@ -196,7 +197,7 @@ void eval(char *cmdline){
 	 */
 	if (!builtin_cmd(argv)){
 
-		// initialize a mask to block SIGCHLD
+		// initialize a mask to block SIGCHILD, SIGINT, SIGTSTP
 		sigemptyset(&mask); 
 		
 		// block SIGCHILD, SIGINT, SIGTSTP
@@ -342,12 +343,20 @@ int builtin_cmd(char **argv) {
 		listjobs(jobs);
 		return 1;
 
-	// FG / BG handling
-	} else if ( !strcmp(argv[0], "fg") || !strcmp(argv[0], "bg") ) {
+	// FG handling
+	} else if (!strcmp(argv[0], "fg")) {
 
-		do_bgfg(argv);
+		int isBG = 0;
+		do_bgfg(argv, isBG);
 		return 1;
-			
+	
+	// BG handling
+	} else if (!strcmp(argv[0], "bg")) {
+
+		int isBG = 1;
+		do_bgfg(argv, isBG);
+		return 1;
+	
 	// Ignore the Single "&" in a command line
 	} else if (!strcmp(argv[0], "&")) {
 
@@ -360,10 +369,62 @@ int builtin_cmd(char **argv) {
 /* 
  * do_bgfg - Execute the builtin bg and fg commands
  */
-void do_bgfg(char **argv) {
+void do_bgfg(char **argv, int isBG) {
+
+	struct job_t *currentJob;
+	pid_t pid;
+	int jobState;
+
+	/***** get jid to execute on based on user input *****/
+
+	/* Need to get the jid from the input command */
+	char *bg_fg_arg = argv[1];
+	char bg_fg_JID_char = bg_fg_arg[1];
+	int jid = bg_fg_JID_char - '0';
+
+	// error checking
+	if (jid < 1) {
+		printf("invalid jid: jid from call bg/fg *jid* must be > 1. \n");
+		return;
+	} 
+
+	// get job from jobs list and error checks
+	if ( (currentJob = getjobjid(jobs, jid)) == NULL)
+		printf("invalid jid: jid from call bg/fg *jid* does not exist\n");
 
 
-	return;
+	// retrieve the pid from the jid and error check
+	if ( (pid = jid2pid(currentJob)) < 1)
+		unix_error("job not found in jobs list.");
+
+
+
+	/***** execute bg/fg commands based on user input *****/
+	
+	// Do conditional work based on if
+	if (isBG) {
+
+		jobState = BG;
+		
+		/* Common Code between BG and FG jobs */
+		kill(-pid, SIGCONT); // continue all jobs in current pgrp
+		changeJobState(jobs, pid, jobState);
+
+		// print the BG job
+		printJob(jobs, pid);
+
+	} else {
+
+		jobState = FG;
+
+		/* Common Code between BG and FG jobs */
+		kill(-pid, SIGCONT); // continue all jobs in current pgrp 
+		changeJobState(jobs, pid, jobState);
+
+		// need to block all other processes until FG job is done
+		waitfg(pid);
+	}
+
 }
 
 /* 
@@ -379,6 +440,7 @@ void waitfg(pid_t pid) {
 	return;
 
 }
+
 
 /*****************
  * Signal handlers
@@ -446,9 +508,6 @@ void sigint_handler(int sig) {
 		// send SIGINT to every process in the current pgrp
 		kill(-currentFGPID, SIGINT);
 
-	} else {
-
-		unix_error("Error retreving foreground job");
 	}
 
 	return;
@@ -621,7 +680,7 @@ struct job_t *getjobjid(struct job_t *jobs, int jid) {
 	return NULL;
 }
 
-/* pid2jid - Map process ID to job ID */
+/* pid2jid - Map process ID to job ID. return 0 if pid is not in jobs list. */
 int pid2jid(pid_t pid) {
 
 	int i;
@@ -634,6 +693,27 @@ int pid2jid(pid_t pid) {
 			return jobs[i].jid;
 
 	return 0;
+}
+
+/* jid2pid - Map job ID to process ID. return 0 if job is not in job list. */
+int jid2pid(struct job_t *job) {
+
+	int i;
+	int isValid_JID = 0;
+	int jid = job->jid;
+
+	/* Check to make sure that the given jobs is */
+	if (jid < 1)
+		return isValid_JID;
+	
+	for (i = 0; i < MAXJOBS; i++)
+		if (jobs[i].jid == jid)
+			isValid_JID = 1;
+
+	if (isValid_JID)
+		return job->pid;
+
+	return isValid_JID;
 }
 
 /* listjobs - Print the job list */
@@ -665,7 +745,6 @@ void listjobs(struct job_t *jobs) {
 		}
 	}
 }
-
 
 /* printJob - Print the given job */
 void printJob(struct job_t *jobs, pid_t pid) {
