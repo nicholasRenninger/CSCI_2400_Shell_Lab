@@ -53,25 +53,28 @@ struct job_t {              /* The job struct */
 };
 
 struct job_t jobs[MAXJOBS]; /* The job list */
+
 /* End global variables */
 
 
-/* Function prototypes */
+/***********************
+ * Function Prototypes
+ ***********************/
 
-/* Here are the functions that you will implement */
+/* Core Functionality */
 void eval(char *cmdline);
+int parseline(const char *cmdline, char **argv); 
 int builtin_cmd(char **argv);
 void do_bgfg(char **argv, int isBG);
 void waitfg(pid_t pid);
 
+/* Signal Handlers */
 void sigchld_handler(int sig);
 void sigtstp_handler(int sig);
 void sigint_handler(int sig);
-
-/* Here are helper routines that we've provided for you */
-int parseline(const char *cmdline, char **argv); 
 void sigquit_handler(int sig);
 
+/* Job Manipulation Functions */
 void clearjob(struct job_t *job);
 void initjobs(struct job_t *jobs);
 int maxjid(struct job_t *jobs); 
@@ -86,11 +89,20 @@ int jid2pid(struct job_t *job);
 void listjobs(struct job_t *jobs);
 void printJob(struct job_t *jobs, pid_t pid);
 
+/* Helper Functions */
 void usage(void);
 void unix_error(char *msg);
 void app_error(char *msg);
 typedef void handler_t(int);
+
+/* Wrapper functions */
 handler_t *Signal(int signum, handler_t *handler);
+void Sigemptyset (sigset_t *mask);
+void Sigaddset (sigset_t *mask, int signo);
+void Sigprocmask(int signo, sigset_t *mask, sigset_t *oset);
+void Setpgid(pid_t pid, pid_t pgid);
+void Kill(pid_t pid, int signum);
+
 
 /*
  * main - The shell's main routine 
@@ -107,24 +119,36 @@ int main(int argc, char **argv){
 
 	/* Parse the command line */
 	while ((c = getopt(argc, argv, "hvp")) != EOF){
+		
 		switch (c) {
-			case 'h':             /* print help message */  
+
+			/* print help message */
+			case 'h':
+				
 				usage();
 				break;
-			case 'v':             /* emit additional diagnostic info */
+
+			/* emit additional diagnostic info */
+			case 'v':
+				
 				verbose = 1;
 				break;
-			case 'p':             /* don't print a prompt */
-				emit_prompt = 0;  /* handy for automatic testing */
+
+			/* don't print a prompt */
+			case 'p':
+
+				/* handy for automatic testing */
+				emit_prompt = 0;
 				break;
+
 			default:
+
 				usage();
-	   }
+		}
 	}
 
 	/* Install the signal handlers */
 
-	/* These are the ones you will need to implement */
 	Signal(SIGINT,  sigint_handler);   /* ctrl-c */
 	Signal(SIGTSTP, sigtstp_handler);  /* ctrl-z */
 	Signal(SIGCHLD, sigchld_handler);  /* Terminated or stopped child */
@@ -160,9 +184,11 @@ int main(int argc, char **argv){
 		fflush(stdout);
 	} 
 
-	exit(0); /* control never reaches here */
+	/* control never reaches here */
+	exit(0); 
 }
-  
+
+
 /* 
  * eval - Evaluate the command line that the user has just typed in
  * 
@@ -200,25 +226,25 @@ void eval(char *cmdline){
 	if (!builtin_cmd(argv)){
 
 		// initialize a mask to block SIGCHILD
-		sigemptyset(&mask); 
+		Sigemptyset(&mask);
 		
 		// block SIGCHILD
-		sigaddset(&mask, SIGCHLD);
+		Sigaddset(&mask, SIGCHLD);
 
 		// apply masks		
-		sigprocmask(SIG_BLOCK, &mask, NULL);
+		Sigprocmask(SIG_BLOCK, &mask, NULL);
 
 
 		/* Use a child process to run the inputed job. */
 		if (( (pid = fork()) == 0 )){
 
 			// unblock SIGCHILD, SIGINT, SIGTSTP
-			sigprocmask(SIG_UNBLOCK, &mask, NULL);
+			Sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
 			/* Need to reset process group of child so that it runs in its own pgrp, 
 			 * not from that of the calling shell. 
 			 */
-			setpgid(0, 0);
+			Setpgid(0, 0);
 
 			/* Call the system call to execute the command given on command line. */
 			if (execve(argv[0], argv, environ) < 0){
@@ -237,10 +263,10 @@ void eval(char *cmdline){
 
 			// need to add job to the BG here
 			if(!addjob(jobs, pid, FG, cmdline))
-				unix_error("added empty job\n.");
+				unix_error("added empty job");
 
 			// unblock SIGCHILD
-			sigprocmask(SIG_UNBLOCK, &mask, NULL);
+			Sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
 			waitfg(pid);
 			return;
@@ -248,10 +274,10 @@ void eval(char *cmdline){
 		} else {
 
 			if(!addjob(jobs, pid, BG, cmdline))
-				unix_error("added empty job\n.");
+				unix_error("added empty job");
 
 			// unblock SIGCHILD
-			sigprocmask(SIG_UNBLOCK, &mask, NULL);
+			Sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
 			printJob(jobs, pid);
 			return;
@@ -280,18 +306,18 @@ int parseline(const char *cmdline, char **argv){
 	buf[strlen(buf)-1] = ' ';  /* replace trailing '\n' with space */
 
 	while (*buf && (*buf == ' ')) /* ignore leading spaces */
-	   buf++;
+		buf++;
 
 	/* Build the argv list */
 	argc = 0;
 	if (*buf == '\'') {
-	   
-	   buf++;
-	   delim = strchr(buf, '\'');
+	
+		buf++;
+		delim = strchr(buf, '\'');
 
 	} else {
 
-	   delim = strchr(buf, ' ');
+		delim = strchr(buf, ' ');
 	}
 
 	while (delim) {
@@ -301,7 +327,7 @@ int parseline(const char *cmdline, char **argv){
 		buf = delim + 1;
 
 		while (*buf && (*buf == ' ')) /* ignore spaces */
-		   buf++;
+			buf++;
 
 		if (*buf == '\'') {
 			
@@ -321,7 +347,7 @@ int parseline(const char *cmdline, char **argv){
 
 	/* should the job run in the background? */
 	if ((bg = (*argv[argc-1] == '&')) != 0)
-	   argv[--argc] = NULL;
+		argv[--argc] = NULL;
 
 	return bg;
 }
@@ -436,7 +462,6 @@ void do_bgfg(char **argv, int isBG) {
 			// cast the entered pid into an int
 			pid = atoi(argv[1]);
 
-
 			// check if the entered pid is in jobs list
 			if ( (jid = pid2jid(pid)) == 0){
 
@@ -456,7 +481,7 @@ void do_bgfg(char **argv, int isBG) {
 		jobState = BG;
 		
 		/* Common Code between BG and FG jobs */
-		kill(-pid, SIGCONT); // continue all jobs in current pgrp
+		Kill(-pid, SIGCONT); // continue all jobs in current pgrp
 		changeJobState(jobs, pid, jobState);
 
 		// print the BG job
@@ -467,7 +492,7 @@ void do_bgfg(char **argv, int isBG) {
 		jobState = FG;
 
 		/* Common Code between BG and FG jobs */
-		kill(-pid, SIGCONT); // continue all jobs in current pgrp 
+		Kill(-pid, SIGCONT); // continue all jobs in current pgrp 
 		changeJobState(jobs, pid, jobState);
 
 		// need to block all other processes until FG job is done
@@ -548,18 +573,17 @@ void sigint_handler(int sig) {
 
 	// get the current FG process to send the signal to.	
 	pid_t currentFGPID = fgpid(jobs);
-	int killStatus;
 
 	if (currentFGPID > 0) {
 
 		// send SIGINT to every process in the current pgrp
-		if( (killStatus = kill(-currentFGPID, sig)) < 0)
-			unix_error("Kill function did not return properly");
+		Kill(-currentFGPID, sig);
 
 	}
 
 	return;
 }
+
 
 /*
  * sigtstp_handler - The kernel sends a SIGTSTP to the shell whenever
@@ -570,13 +594,11 @@ void sigtstp_handler(int sig) {
 
 	// get the current FG process to send the signal to.
 	pid_t currentFGPID = fgpid(jobs);
-	int killStatus;
 
 	if (currentFGPID > 0) {
 
 		// send SIGTSTP to every process in the current pgrp
-		if( (killStatus = kill(-currentFGPID, sig)) < 0)
-			unix_error("Kill function did not return properly");
+		Kill(-currentFGPID, sig);
 
 	} else {
 
@@ -848,8 +870,23 @@ void app_error(char *msg) {
 }
 
 /*
- * Signal - wrapper for the sigaction function
+ * sigquit_handler - The driver program can gracefully terminate the
+ *    child shell by sending it a SIGQUIT signal.
  */
+void sigquit_handler(int sig) {
+
+	printf("Terminating after receipt of SIGQUIT signal\n");
+	exit(1);
+}
+
+
+
+/*********************************
+ * Wrapper fcns for system calls
+ *********************************/
+
+
+/* Signal - wrapper for the sigaction function */
 handler_t *Signal(int signum, handler_t *handler) {
 
 	struct sigaction action, old_action;
@@ -864,15 +901,65 @@ handler_t *Signal(int signum, handler_t *handler) {
 	return (old_action.sa_handler);
 }
 
-/*
- * sigquit_handler - The driver program can gracefully terminate the
- *    child shell by sending it a SIGQUIT signal.
- */
-void sigquit_handler(int sig) {
 
-	printf("Terminating after receipt of SIGQUIT signal\n");
-	exit(1);
+/* Wrapper fcn for sigemptyset system call */
+void Sigemptyset (sigset_t *mask){
+
+	int status;
+
+	// catch error in system call
+	if ( (status = sigemptyset(mask)) < 0 ) {
+
+		unix_error("sigemptyset error");
+	}
 }
 
 
+/* Wrapper fcn for sigaddset system call */
+void Sigaddset (sigset_t *mask, int signo){
 
+	int status;
+
+	// catch error in system call
+	if ( (status = sigaddset(mask, signo)) < 0 ) {
+
+		unix_error("sigaddset error");
+	}
+}
+
+
+/* Wrapper fcn for sigprocmask system call */
+void Sigprocmask(int signo, sigset_t *mask, sigset_t *oset) {
+
+	int status;
+
+	// catch error in system call
+	if ( (status = sigprocmask(signo, mask, oset)) < 0 ) {
+
+		unix_error("sigprocmask error");
+	}
+}
+
+/* Wrapper fcn for setpgid system call */
+void Setpgid(pid_t pid, pid_t pgid){
+
+	int status;
+
+	// catch error in system call
+	if ( (status = setpgid(pid, pgid)) < 0 ) {
+
+		unix_error("setpgid error");
+	}
+}
+
+
+/* Wrapper fcn for kill system call */
+void Kill(pid_t pid, int signum) {
+	
+	int status;
+
+	if ( (status = kill(pid, signum)) < 0 ) {
+		
+		unix_error("Kill error");
+	}
+}
