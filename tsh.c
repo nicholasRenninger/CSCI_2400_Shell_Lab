@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <ctype.h>
 
 /* Misc manifest constants */
 #define MAXLINE     1024   			/* max line size */
@@ -147,7 +148,8 @@ int main(int argc, char **argv){
 		if ((fgets(cmdline, MAXLINE, stdin) == NULL) && ferror(stdin))
 			app_error("fgets error");
 		
-		if (feof(stdin)) { /* End of file (ctrl-d) */
+		/* End of file (ctrl-d) */
+		if (feof(stdin)) { 
 			fflush(stdout);
 			exit(0);
 		}
@@ -174,7 +176,7 @@ int main(int argc, char **argv){
 */
 void eval(char *cmdline){
 
-	char *argv[MAXARGS]; 	// arguments sent to the execve() system call
+	char* argv[MAXARGS]; 	// arguments sent to the execve() system call
 	char buf[MAXLINE]; 		// buffer storing entered command line
 	pid_t pid; 				// process ID of current process
 	int isBG;				// determines whether the job should be run in the bg or fg
@@ -197,13 +199,11 @@ void eval(char *cmdline){
 	 */
 	if (!builtin_cmd(argv)){
 
-		// initialize a mask to block SIGCHILD, SIGINT, SIGTSTP
+		// initialize a mask to block SIGCHILD
 		sigemptyset(&mask); 
 		
-		// block SIGCHILD, SIGINT, SIGTSTP
+		// block SIGCHILD
 		sigaddset(&mask, SIGCHLD);
-		sigaddset(&mask, SIGINT);
-		sigaddset(&mask, SIGTSTP);
 
 		// apply masks		
 		sigprocmask(SIG_BLOCK, &mask, NULL);
@@ -212,19 +212,19 @@ void eval(char *cmdline){
 		/* Use a child process to run the inputed job. */
 		if (( (pid = fork()) == 0 )){
 
+			// unblock SIGCHILD, SIGINT, SIGTSTP
+			sigprocmask(SIG_UNBLOCK, &mask, NULL);
+
 			/* Need to reset process group of child so that it runs in its own pgrp, 
 			 * not from that of the calling shell. 
 			 */
 			setpgid(0, 0);
 
-			// unblock SIGCHILD, SIGINT, SIGTSTP
-			sigprocmask(SIG_UNBLOCK, &mask, NULL);
-
 			/* Call the system call to execute the command given on command line. */
 			if (execve(argv[0], argv, environ) < 0){
 
 				// if the system call does not function, inform user of error and quit.
-				printf("%s: Command not found :(.\n", argv[0]);
+				printf("%s: Command not found\n", argv[0]);
 				exit(0);
 			}
 
@@ -243,6 +243,7 @@ void eval(char *cmdline){
 			sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
 			waitfg(pid);
+			return;
 
 		} else {
 
@@ -253,12 +254,11 @@ void eval(char *cmdline){
 			sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
 			printJob(jobs, pid);
+			return;
 		}
 
 	}
 
-
-	return;
 }
 
 /* 
@@ -373,31 +373,80 @@ void do_bgfg(char **argv, int isBG) {
 
 	struct job_t *currentJob;
 	pid_t pid;
+	int jid;
 	int jobState;
+	char bg_fg_JID_char;
+	char *cmdStr = "fg";
+
+	if (isBG)
+		cmdStr = "bg";
 
 	/***** get jid to execute on based on user input *****/
 
 	/* Need to get the jid from the input command */
-	char *bg_fg_arg = argv[1];
-	char bg_fg_JID_char = bg_fg_arg[1];
-	int jid = bg_fg_JID_char - '0';
 
-	// error checking
-	if (jid < 1) {
-		printf("invalid jid: jid from call bg/fg *jid* must be > 1. \n");
+	/* Check that the user actually entered argument to the fg/bg command */
+	if (argv[1] == NULL) {
+
+		printf("%s command requires PID or %%jobid argument\n", cmdStr);
 		return;
+
 	} 
 
-	// get job from jobs list and error checks
-	if ( (currentJob = getjobjid(jobs, jid)) == NULL)
-		printf("invalid jid: jid from call bg/fg *jid* does not exist\n");
+	/* Check if the argument to bg/fg is valid */
+	char *bg_fg_arg = argv[1];
+
+	if (bg_fg_arg[0] == '%') { // user entered a job fg/bg command
+
+		if (!isdigit(bg_fg_arg[1])) {
+
+			printf("%s: argument must be a PID or %%jobid\n", cmdStr);
+			return;
+
+		} else { // used entered a valid jid
+
+			bg_fg_JID_char = bg_fg_arg[1];
+			
+			// convert char jid to int jid
+			jid = bg_fg_JID_char - '0'; 
+
+			// get job from jobs list and error checks
+			if ( (currentJob = getjobjid(jobs, jid)) == NULL){
+				printf("%s: No such job\n", argv[1]);
+				return;
+			}
+
+			// retrieve the pid from the jid and error check
+			if ( (pid = jid2pid(currentJob)) < 1){
+
+				printf("(%d): No such process\n", pid);
+				return;
+			}
+		}
+
+	} else { // user entered a pid
+
+		if ( !isdigit(bg_fg_arg[0]) ) { // used entered a non-numeric pid
+
+			printf("%s: argument must be a PID or %%jobid\n", cmdStr);
+			return;
+
+		} else { // user entered a valid pid
+
+			// cast the entered pid into an int
+			pid = atoi(argv[1]);
 
 
-	// retrieve the pid from the jid and error check
-	if ( (pid = jid2pid(currentJob)) < 1)
-		unix_error("job not found in jobs list.");
+			// check if the entered pid is in jobs list
+			if ( (jid = pid2jid(pid)) == 0){
 
+				printf("(%d): No such process\n", pid);
+				return;
+			}
+		}
 
+	}
+	
 
 	/***** execute bg/fg commands based on user input *****/
 	
@@ -434,7 +483,7 @@ void waitfg(pid_t pid) {
  
 	while(pid == fgpid(jobs)) {
 		// simply spin this proccess until the job isn't in FG
-		;
+		sleep(0.1);
 	}
 
 	return;
@@ -487,9 +536,6 @@ void sigchld_handler(int sig) {
 
 	}
 
-	if (errno != ECHILD)
-		unix_error("waitpid error");
-
 	return;
 }
 
@@ -502,11 +548,13 @@ void sigint_handler(int sig) {
 
 	// get the current FG process to send the signal to.	
 	pid_t currentFGPID = fgpid(jobs);
+	int killStatus;
 
 	if (currentFGPID > 0) {
 
 		// send SIGINT to every process in the current pgrp
-		kill(-currentFGPID, SIGINT);
+		if( (killStatus = kill(-currentFGPID, sig)) < 0)
+			unix_error("Kill function did not return properly");
 
 	}
 
@@ -522,11 +570,13 @@ void sigtstp_handler(int sig) {
 
 	// get the current FG process to send the signal to.
 	pid_t currentFGPID = fgpid(jobs);
+	int killStatus;
 
 	if (currentFGPID > 0) {
 
 		// send SIGTSTP to every process in the current pgrp
-		kill(-currentFGPID, SIGTSTP);
+		if( (killStatus = kill(-currentFGPID, sig)) < 0)
+			unix_error("Kill function did not return properly");
 
 	} else {
 
